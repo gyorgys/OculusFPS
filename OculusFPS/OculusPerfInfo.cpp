@@ -1,5 +1,10 @@
 #include "OculusPerfInfo.h"
 #include <assert.h>
+#include <time.h>
+
+int rand_int(int n) {
+	return rand() / ((RAND_MAX + 1u) / n);
+}
 
 OculusPerfInfo::OculusPerfInfo()
 {
@@ -15,6 +20,16 @@ bool OculusPerfInfo::init()
 	}
 	this->m_fInitialized = true;
 	this->m_thread = std::thread(&OculusPerfInfo::collectPerfData, this);
+
+	return true;
+}
+
+bool OculusPerfInfo::initTestMode()
+{
+	srand((UINT)time(NULL));
+	this->m_fInitialized = true;
+	this->m_fHmdRefreshRate = 90.0;
+	this->m_thread = std::thread(&OculusPerfInfo::collectTestPerfData, this);
 
 	return true;
 }
@@ -166,5 +181,61 @@ void OculusPerfInfo::collectPerfData()
 	}
 	this->destroyOvrSession();
 	ovr_Shutdown();
+}
+
+void OculusPerfInfo::collectTestPerfData()
+{
+	auto sleepTime = std::chrono::milliseconds((int)(1000 / m_fHmdRefreshRate * 15));
+	bool fAws = true;
+	int nMaxFps = (int)round(this->m_fHmdRefreshRate);
+	int nMaxAwsFps = (int)round(this->m_fHmdRefreshRate / 2.0);
+	int nPerfDropCount = 0;
+
+	while (!this->m_fStop) {
+
+		int nFpsDrop = 0;
+		bool fDropFrames = false;
+
+		if (nPerfDropCount > 0) {
+			// continue simulated perf drop
+			nPerfDropCount--;
+			nFpsDrop = rand_int((int)(round(fAws ? nMaxAwsFps * 0.7 : nMaxFps * 0.7)));
+			fDropFrames = rand_int(3) > 1;
+		}
+		else {
+			// figure out next event to simulate
+			int nRnd = rand_int(300);
+
+			// Do random stuff
+			if (nRnd < 15) {
+				// slight fps drop
+				nFpsDrop = nRnd;
+			}
+			else if (nRnd < 20) {
+				// long, sever perf drop
+				nPerfDropCount = (nRnd - 15) * 25;
+			}
+			else if (nRnd < 30) {
+				// mode switch
+				fAws = !fAws;
+			}
+			else {
+				// do nothing
+			}
+		}
+		this->m_pfiLastPerfInfo.fHeadsetActive = true;
+		this->m_pfiLastPerfInfo.nAppFps = (fAws ? nMaxAwsFps : nMaxFps) - nFpsDrop;
+		this->m_pfiLastPerfInfo.nMaxAppFps = (fAws ? nMaxAwsFps : nMaxFps);
+		this->m_pfiLastPerfInfo.nCompFps = 90;
+		this->m_pfiLastPerfInfo.nLatencyMs = 24;
+		this->m_pfiLastPerfInfo.fAwsActive = fAws;
+		this->m_pfiLastPerfInfo.nDroppedFrames = fDropFrames ? 1 : 0;
+
+		if (this->m_pfCallback != NULL) {
+			this->m_pfCallback(this->m_pfiLastPerfInfo);
+		}
+
+		std::this_thread::sleep_for(sleepTime);
+	}
 }
 

@@ -7,6 +7,7 @@
 struct opi_PerfInfo {
     bool fHeadsetActive;
     int nAppFps;
+    int nMaxAppFps;
     int nCompFps;
     int nLatencyMs;
     int nDroppedFrames;
@@ -29,12 +30,14 @@ public:
     OculusPerfInfo();
     ~OculusPerfInfo();
     bool init();
-    void collectPerfData();
+    bool initTestMode();
     void setCallback(void(*pfCallback)(opi_PerfInfo&));
     opi_PerfInfo getPerfInfo();
 
 protected:
     bool createOvrSession();
     void destroyOvrSession();
+    void collectPerfData();
+    void collectTestPerfData();
 };
 

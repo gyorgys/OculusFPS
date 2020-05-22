@@ -3,6 +3,7 @@
 
 #include "framework.h"
 #include "OculusFPS.h"
+#include <shellapi.h>
 #include <stdlib.h>
 #include <string> 
 #include <time.h>
@@ -21,15 +22,15 @@ const int CLIENT_HEIGHT = PADDING * 3 + TITLE_HEIGHT + DATA_HEIGHT;
 
 const COLORREF WINDOW_BACKGROUND = RGB(64, 64, 64);
 const COLORREF TITLE_COLOR = RGB(148, 148, 148);
-const COLORREF DATA_COLOR = RGB(192, 192, 192);
-const COLORREF AWS_DATA_COLOR = RGB(255, 220, 192);
+const COLORREF DATA_COLOR[4] = { RGB(0, 255, 0), RGB(128, 204, 0), RGB(255, 128, 64), RGB(255, 0, 0) };
+const COLORREF AWS_LABEL_COLOR = RGB(255, 128, 0);
 
 const WCHAR STR_NO_INIT[] = L"Unable to initialize Oculus Library";
 const WCHAR STR_NO_HMD[] = L"Headset Inactive"; 
 const WCHAR STR_FPS_TITLE[] = L"FPS";
+const WCHAR STR_AWS_IND[] = L"[AWS]";
 const WCHAR STR_LATENCY_TITLE[] = L"Latency (ms)";
 const WCHAR STR_DROPPED_FRAMES_TITLE[] = L"Dropped frames";
-const WCHAR STR_AWS_ACTIVE[] = L"AWS";
 
 // Global Variables:
 HINSTANCE _hInst;                                // current instance
@@ -39,8 +40,11 @@ UINT_PTR _idTimer = 0;
 HWND _hPerfInfoWnd;
 OculusPerfInfo* _perfInfoClass;
 
+// Command line args
+bool _fTestMode;
+
 // Perf data
-bool _perfInfoInitialized;
+bool _fPerfInfoInitialized;
 opi_PerfInfo _perfInfo;
 
 // Forward declarations of functions included in this code module:
@@ -58,11 +62,26 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_ LPWSTR    lpCmdLine,
                      _In_ int       nCmdShow)
 {
-    srand(time(NULL));
     UNREFERENCED_PARAMETER(hPrevInstance);
-    UNREFERENCED_PARAMETER(lpCmdLine);
+    
+    LPWSTR* szArglist;
+    int nArgs;
 
-    // TODO: Place code here.
+    szArglist = CommandLineToArgvW(lpCmdLine, &nArgs);
+    if (NULL != szArglist) {
+        for (int i = 0; i < nArgs; i++) {
+            LPWSTR szArg = szArglist[i];
+            int nArgLen = wcslen(szArg);
+            if (nArgLen > 0) {
+                _wcslwr_s(szArg, nArgLen + 1);
+                if (0 == wcscmp(szArg, L"-d")) 
+                {
+                    _fTestMode = true;
+                }
+            }
+        }
+        LocalFree(szArglist);
+    }
 
     // Initialize global strings
     LoadStringW(hInstance, IDS_APP_TITLE, _szTitle, MAX_LOADSTRING);
@@ -93,8 +112,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     return (int) msg.wParam;
 }
 
-
-
 //
 //  FUNCTION: MyRegisterClass()
 //
@@ -116,7 +133,7 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     wcex.hCursor        = LoadCursor(nullptr, IDC_ARROW);
     wcex.hbrBackground  = CreateSolidBrush(WINDOW_BACKGROUND);
     wcex.lpszClassName  = _szWindowClass;
-    wcex.hIconSm        = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
+    wcex.hIconSm        = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_OCULUSFPS));
 
     return RegisterClassExW(&wcex);
 }
@@ -149,7 +166,13 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    ShowWindow(hWnd, nCmdShow);
    UpdateWindow(hWnd);
    _perfInfoClass = new OculusPerfInfo();
-   _perfInfoInitialized = _perfInfoClass->init();
+   if (!_fTestMode) {
+       _fPerfInfoInitialized = _perfInfoClass->init();
+   }
+   else {
+       _fPerfInfoInitialized = _perfInfoClass->initTestMode();
+   }
+
    _perfInfoClass->setCallback(UpdatePerfData);
    return TRUE;
 }
@@ -248,7 +271,7 @@ void DisplayPerfData(HDC hdc)
         SetTextColor(hdc, TITLE_COLOR);
         SetBkColor(hdc, WINDOW_BACKGROUND);
 
-        if (!_perfInfoInitialized) {
+        if (!_fPerfInfoInitialized) {
             int x = CLIENT_WIDTH / 2;
             int y = (CLIENT_HEIGHT - TITLE_HEIGHT) / 2;
             TextOut(hdc, x, y, STR_NO_INIT, wcslen(STR_NO_INIT));
@@ -263,7 +286,32 @@ void DisplayPerfData(HDC hdc)
             std::wstring strFps = std::to_wstring(_perfInfo.nAppFps);
             std::wstring strLatency = std::to_wstring(_perfInfo.nLatencyMs);
             std::wstring strDroppedFrames = std::to_wstring(_perfInfo.nDroppedFrames);
-            
+
+            int nOkFps = _perfInfo.fAwsActive ? 30 : 60;
+            int nBadFps = _perfInfo.nMaxAppFps / 2;
+
+            int iFpsColor = 0, iLatencyColor = 0, iDroppedFramesColor = 0;
+            if (_perfInfo.nAppFps < nBadFps) {
+                iFpsColor = 3;
+            }
+            else if (_perfInfo.nAppFps < nOkFps) {
+                iFpsColor = 2;
+            }
+            else if (_perfInfo.nAppFps < _perfInfo.nMaxAppFps) {
+                iFpsColor = 1;
+            }
+
+            if (_perfInfo.nLatencyMs > 30) {
+                iLatencyColor = 2;
+            }
+            else if (_perfInfo.nLatencyMs > 60) {
+                iLatencyColor = 3;
+            }
+
+            if (_perfInfo.nDroppedFrames > 0) {
+                iDroppedFramesColor = 2;
+            }
+
             int y = PADDING;
             int x = PADDING + CELL_WIDTH / 2;
 
@@ -272,12 +320,23 @@ void DisplayPerfData(HDC hdc)
             TextOut(hdc, x + CELL_WIDTH, y, STR_LATENCY_TITLE, wcslen(STR_LATENCY_TITLE));
             TextOut(hdc, x + CELL_WIDTH * 2, y, STR_DROPPED_FRAMES_TITLE, wcslen(STR_DROPPED_FRAMES_TITLE));
 
-            SetTextColor(hdc, _perfInfo.fAwsActive ? AWS_DATA_COLOR : DATA_COLOR);
+            
             y += TITLE_HEIGHT;
             SelectObject(hdc, hDataFont);
+            SetTextColor(hdc, DATA_COLOR[iFpsColor]); 
             TextOut(hdc, x, y, strFps.c_str(), strFps.length());
+            SetTextColor(hdc, DATA_COLOR[iLatencyColor]); 
             TextOut(hdc, x + CELL_WIDTH, y, strLatency.c_str(), strLatency.length());
+            SetTextColor(hdc, DATA_COLOR[iDroppedFramesColor]); 
             TextOut(hdc, x + CELL_WIDTH * 2, y, strDroppedFrames.c_str(), strDroppedFrames.length());
+
+            if (_perfInfo.fAwsActive) {
+                SetTextAlign(hdc, TA_TOP | TA_LEFT);
+                SelectObject(hdc, hTitleFont);
+                SetTextColor(hdc, WINDOW_BACKGROUND);
+                SetBkColor(hdc, AWS_LABEL_COLOR);
+                TextOut(hdc, PADDING, PADDING, STR_AWS_IND, wcslen(STR_AWS_IND));
+            }
         }
         // Restore the original font.        
         SelectObject(hdc, hOldFont);

@@ -170,6 +170,7 @@
     <ResourceCompile Include="OculusFPS.rc" />
   </ItemGroup>
   <ItemGroup>
+    <Image Include="icon1.ico" />
     <Image Include="OculusFPS.ico" />
     <Image Include="small.ico" />
   </ItemGroup>
